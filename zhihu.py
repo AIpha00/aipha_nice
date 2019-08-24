@@ -16,7 +16,11 @@ import copy
 from hyper.contrib import HTTP20Adapter
 from lxml import etree
 import pymongo
+import logging
+import asyncio
 
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# logger = logging.getLogger(__name__)
 
 
 class ZhihuSpider():
@@ -47,6 +51,9 @@ class ZhihuSpider():
             "Accept-Encoding": "gzip, deflate",
             "Accept-Language": "zh-CN,zh;q=0.9",
         }
+        self.page_headers = copy.deepcopy(self.headers)
+        self.page_headers["Referer"] = 'https://www.zhihu.com/'
+        self.page_headers["X-API-VERSION"] = '3.0.53'
         self.headers_login = {
             ":authority": "www.zhihu.com",
             ":method": "GET",
@@ -78,18 +85,18 @@ class ZhihuSpider():
         self.headers['x-xsrftoken'] = xsrf.strip()
         self.headers['x-zse-83'] = '3_2.0'
         self.headers['content-type'] = 'application/x-www-form-urlencoded'
-        print(execjs.get().name)
+        # print(execjs.get().name)
         with open('zhihu.js', 'r', errors='ignore') as f:
             js_code = f.read()
         exejs = execjs.compile(js_code)
         encrypt_js = exejs.call('b', urlencode(self.login_data))
-        print(encrypt_js)
-        print(self.headers)
+        # print(encrypt_js)
+        # print(self.headers)
         response = requests.post(self.login_check, headers=self.headers, data=encrypt_js)
-        print(response.text)
+        # print(response.text)
         if 'error' in response.text:
             print(json.loads(response.text)['error']['message'])
-        if response.status_code in [200,201,202]:
+        if response.status_code in [200, 201, 202]:
             print('登录成功')
             cookies = response.headers['Set-Cookie'].split(';')
             res_cookie = []
@@ -104,17 +111,21 @@ class ZhihuSpider():
                     else:
                         continue
             self.headers_login['Cookie'] = self.headers['Cookie']+";"+res_cookie[0]
+            self.headers['Cookie'] = self.headers_login['Cookie']
+            # self.headers['Cookie'] = self.headers['Cookie']+";"+res_cookie[0]
             # zhihu_http2 = HTTP20Connection(self.login_url)
             req_http2 = requests.Session()
             req_http2.mount(self.login_url, HTTP20Adapter())
             res_login = req_http2.get(url=self.login_url, headers=self.headers_login)
+            # res_login = requests.get(url=self.login_url, headers=self.headers)
             for i in self.zhihu_parse(res_login):
                 pass
+            session_token = re.findall('session_token=(.*?)&', str(res_login.text), re.S)[0]
+            self.next_page(session_token)
             return True
         else:
             print('登录失败')
             return False
-
 
     def _get_xsrf(self):
         response = requests.head(url=self.login_url, headers=self.headers)
@@ -130,7 +141,7 @@ class ZhihuSpider():
                     res_cookie.append(set)
                 else:
                     continue
-        print(res_cookie)
+        # print(res_cookie)
         self.headers['Cookie'] = ';'.join(res_cookie).strip()
         return res_cookie[-1]
 
@@ -170,14 +181,14 @@ class ZhihuSpider():
                     res_cookie.append(set)
                 else:
                     continue
-        print(res_cookie)
+        # print(res_cookie)
         capt_headers['Cookie'] = ';'.join(res_cookie).strip()
         self.headers['Cookie'] = self.headers['Cookie']+";"+res_cookie[0]
 
         if show_captcha:
             put_resp = requests.put(api, headers=capt_headers)
             json_data = json.loads(put_resp.text)
-            print(put_resp.text)
+            # print(put_resp.text)
             img_base64 = json_data['img_base64'].replace(r'\n', '')
             with open('./captcha.jpg', 'wb') as f:
                 f.write(base64.b64decode(img_base64))
@@ -196,12 +207,49 @@ class ZhihuSpider():
             return capt, res_cookie[-1]
         return ''
 
+    def next_page(self, session_token, page_size=60):
+        '''
+        请求知乎的首页AJAX请求
+        :param response:
+        :param session_token:
+        :return:
+        '''
+        for page in range(1, page_size+1):
+            page_data = {
+                    'session_token': session_token,
+                    'desktop': 'true&',
+                    'page_numbe': page,
+                    'limit': '6',
+                    'action': 'down',
+                    'after_id': str((page-1) * 6 -1)
+            }
+            next_url_base = 'https://www.zhihu.com/api/v3/feed/topstory/recommend?'
+            response = requests.get(next_url_base + urlencode(page_data), headers=self.headers)
+            # print(response.text)
+            logging.info('正在解析{}页的数据'.format(page))
+            for item in self.zhihu_parse_ajax(response):
+                self.mydb['zhihu_test'].insert(item)
+                pass
+
+    def zhihu_parse_ajax(self, response):
+        data = json.loads(response.text)
+        print(data)
+        for node in data['data']:
+            item_new = {}
+            item_new['title'] = node['target'].get('title', "").encode('utf-8').decode('utf-8')
+            item_new['article_anwser'] = node['target'].get('id', "")
+            item_new['article_question'] = node['target'].get('question',{}).get('id', '')
+            item_new['article_short'] = node['target'].get('excerpt', "").encode('utf-8').decode('utf-8')
+            print(item_new)
+            yield item_new
+
     def zhihu_parse(self, response):
         '''
         解析知乎首页
         :param response:
         :return:
         '''
+        response.encoding='utf-8'
         html = etree.HTML(response.text)
         node_list = html.xpath('//div[contains(@class,Card) and contains(@class,TopstoryItem) and contains(@class,TopstoryItem-isRecommend)]//div[contains(@class, "Feed")]')
         for node in node_list:
@@ -216,8 +264,8 @@ class ZhihuSpider():
 
 
 if __name__ == '__main__':
-    zhihu = ZhihuSpider(username='your_username', password="your_password")
+    zhihu = ZhihuSpider(username='13795870040', password="herococo11.")
     if zhihu.login():
-        print('登陆成功')
+        print('数据抓取-解析-入库-结束')
     else:
-        print('登陆失败')
+        print('出现错误')

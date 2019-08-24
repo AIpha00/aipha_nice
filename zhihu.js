@@ -422,4 +422,4 @@ const window = document.defaultView;
         return __g._encrypt(encodeURIComponent(e))
     };
     exports.ENCRYPT_VERSION = A,
-    exports.default = b
+    exports.default = b;

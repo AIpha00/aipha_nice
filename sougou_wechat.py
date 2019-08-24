@@ -4,7 +4,7 @@
 
 import requests
 import time
-from urllib.parse import urlencode,quote
+from urllib.parse import urlencode, quote
 import uuid
 from lxml import etree
 import random
@@ -61,15 +61,19 @@ def get_cookie(url):
         b = int(random.random() * 100) + 1
         a = link.find("url=")
         c = link.find("&k=")
-        result_link = (link + "&k=" + str(b) + "&h=" + link[a + 4 + 26 + b: a + 4 + 26 + b + 1])
+        result_link = (link + "&k=" + str(b) + "&h=" + link[a + 4 + 21 + b: a + 4 + 21 + b + 1])
         print(result_link)
         resp = requests.get(url= "https://weixin.sogou.com" +result_link, headers=headers)
+        resp.encoding = 'utf-8'
         rel_url = re.findall("\'(\S+?)\';", resp.text, re.S)
         rel_url = ''.join(rel_url)
         xq_resp = requests.get(url=rel_url, headers=headers_xq)
-        html = etree.HTML(xq_resp.text)
-        title = html.xpath("normalize-space(.//div[@class='profile_info']//strong)")
-        print('put successful:{}'.format(title))
+        if "请输入验证码" in xq_resp.text:
+            print("antispider")
+        else:
+            html = etree.HTML(xq_resp.text)
+            title = html.xpath("normalize-space(.//div[@class='profile_info']//strong)")
+            print('put successful:{}'.format(title))
 
 
 def get_suv(snuid):
