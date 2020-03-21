@@ -404,7 +404,7 @@ async def run_article():
     await asyncio.wait(to_get)
 
 if __name__ == '__main__':
-    zhihu = ZhihuSpider(username='13795870040', password="herococo11.")
+    zhihu = ZhihuSpider(username='username', password="password")
     zhihu.login()
     # if zhihu.login():
     #     #     print('数据抓取-解析-入库-结束')
